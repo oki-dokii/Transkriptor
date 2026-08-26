@@ -171,10 +171,11 @@ def _semantic_fallback(texts: list[str]) -> list[tuple[float, str, str]]:
 def score_semantic_importance(blocks: list[dict]) -> list[tuple[float, list[str]]]:
     label_to_score = {"high": 1.0, "medium": 0.55, "low": 0.2}
     texts = [b["text"] for b in blocks]
-    api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("CLEAN_MODEL", "gpt-4o-mini")
+    try:
+        from llm_client import chat_complete, llm_api_key
 
-    if not api_key:
+        llm_api_key()
+    except Exception:
         return [
             (score, [f"semantic {label}: {reason}"])
             for score, label, reason in _semantic_fallback(texts)
@@ -194,21 +195,18 @@ def score_semantic_importance(blocks: list[dict]) -> list[tuple[float, list[str]
         f"{numbered}"
     )
     try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0,
-            messages=[
+        raw = chat_complete(
+            [
                 {
                     "role": "system",
                     "content": "You label lecture blocks. Reply with JSON only.",
                 },
                 {"role": "user", "content": prompt},
             ],
+            temperature=0,
+            json_mode=True,
         )
-        parsed = _parse_semantic_json(response.choices[0].message.content or "[]")
+        parsed = _parse_semantic_json(raw or "[]")
         by_index = {
             int(item["block_index"]): item
             for item in parsed

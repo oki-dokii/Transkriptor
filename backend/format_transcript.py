@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 
 GAP_SECONDS = 3.0
@@ -154,25 +153,17 @@ def _split_markdown_chunks(markdown: str, max_chars: int = 8000) -> list[str]:
 
 
 def llm_clean(markdown: str) -> str:
-    from openai import OpenAI
+    from llm_client import chat_complete
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-
-    client = OpenAI(api_key=api_key)
-    model = os.getenv("CLEAN_MODEL", "gpt-4o-mini")
     cleaned_parts: list[str] = []
     for chunk in _split_markdown_chunks(markdown):
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0,
-            messages=[
+        text = chat_complete(
+            [
                 {"role": "system", "content": CLEAN_SYSTEM},
                 {"role": "user", "content": chunk},
             ],
+            temperature=0,
         )
-        text = (response.choices[0].message.content or "").strip()
         if text:
             cleaned_parts.append(text)
     result = "\n\n".join(cleaned_parts).strip()

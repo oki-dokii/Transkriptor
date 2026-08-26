@@ -6,16 +6,41 @@ let pollTimer = null;
 let cardIndex = 0;
 let cardFlipped = false;
 let quizState = { answered: {}, score: 0 };
+let resumeInFlight = false;
 
 function $(id) {
   return document.getElementById(id);
 }
 
 function parseMd(text) {
-  const src = text || "";
-  if (globalThis.marked?.parse) return marked.parse(src);
-  if (typeof marked === "function") return marked(src);
-  return src.replace(/</g, "&lt;");
+  const src = String(text || "");
+  try {
+    if (globalThis.marked?.parse) return marked.parse(src);
+    if (typeof marked === "function") return marked(src);
+  } catch {
+    /* fall through */
+  }
+  return src.replace(/</g, "&lt;").replace(/\n/g, "<br>");
+}
+
+function applyStatus(record, data, jobId) {
+  return {
+    ...(record || {}),
+    jobId: jobId || record?.jobId,
+    title: record?.title,
+    raw: data.raw || record?.raw,
+    clean: data.clean || record?.clean,
+    importance: data.importance || record?.importance,
+    notes: data.notes || record?.notes,
+    mcqs: Array.isArray(data.mcqs) && data.mcqs.length ? data.mcqs : record?.mcqs,
+    flashcards:
+      Array.isArray(data.flashcards) && data.flashcards.length
+        ? data.flashcards
+        : record?.flashcards,
+    revision: data.revision || record?.revision,
+    stages: data.stages || record?.stages,
+    error: data.error || record?.error,
+  };
 }
 
 function decorateTiers(html) {
@@ -62,12 +87,16 @@ function renderTranscript(record, query) {
 }
 
 function renderNotes(record) {
-  $("notesStatus").textContent = record?.notes
+  const notes = (record?.notes || "").trim();
+  $("notesStatus").textContent = notes
     ? ""
     : `Notes ${stageLabel(record?.stages, "notes", false)}`;
-  $("notesBody").innerHTML = record?.notes
-    ? decorateTiers(parseMd(record.notes))
-    : "<p>Notes will appear here as soon as they are generated.</p>";
+  if (!notes) {
+    $("notesBody").innerHTML = "<p>Notes will appear here as soon as they are generated.</p>";
+    return;
+  }
+  const html = decorateTiers(parseMd(notes));
+  $("notesBody").innerHTML = html && String(html).trim() ? html : notes.replace(/</g, "&lt;").replace(/\n/g, "<br>");
 }
 
 function renderMcqs(record) {
@@ -136,8 +165,9 @@ function renderCard(record) {
 }
 
 function renderRevision(record) {
-  $("revisionBody").innerHTML = record?.revision
-    ? decorateTiers(parseMd(record.revision))
+  const revision = (record?.revision || "").trim();
+  $("revisionBody").innerHTML = revision
+    ? decorateTiers(parseMd(revision))
     : `<p>Revision ${stageLabel(record?.stages, "revision", false)}</p>`;
 }
 
@@ -162,8 +192,20 @@ function renderHistory(rows) {
   });
 }
 
+function hasTranscript(record) {
+  const segs = record?.raw?.segments || record?.transcript;
+  return Array.isArray(segs) && segs.length > 0;
+}
+
 function packReady(rec) {
-  return Boolean(rec?.notes && rec?.mcqs && rec?.flashcards && rec?.revision);
+  return Boolean(
+    rec?.notes &&
+      Array.isArray(rec?.mcqs) &&
+      rec.mcqs.length &&
+      Array.isArray(rec?.flashcards) &&
+      rec.flashcards.length &&
+      rec?.revision
+  );
 }
 
 function paint(record) {
@@ -174,11 +216,15 @@ function paint(record) {
     $("jobLine").textContent = record.error;
   } else if (packReady(record)) {
     $("jobLine").textContent = "All outputs ready";
+  } else if (hasTranscript(record) && !packReady(record)) {
+    $("jobLine").textContent = "Transcript ready. Building notes / MCQs / cards…";
   } else if (stages) {
     $("jobLine").textContent = `T ${stages.transcript || "…"} · N ${stages.notes || "…"} · Q ${stages.mcqs || "…"} · F ${stages.flashcards || "…"} · R ${stages.revision || "…"}`;
   } else {
     $("jobLine").textContent = "Generating…";
   }
+  $("generatePack").textContent =
+    hasTranscript(record) && !packReady(record) ? "Finish study pack" : "Generate study pack";
   renderTranscript(record, $("search").value.trim());
   renderNotes(record);
   renderMcqs(record);
@@ -186,16 +232,79 @@ function paint(record) {
   renderRevision(record);
 }
 
+async function resumeStudyPack(record) {
+  if (resumeInFlight || !hasTranscript(record) || packReady(record)) return;
+  resumeInFlight = true;
+  $("jobLine").textContent = "Finishing study pack from saved transcript…";
+  try {
+    const res = await fetch(`${BACKEND_URL}/from-transcript`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lectureId: record.lectureId,
+        segments: record.raw?.segments || record.transcript,
+        raw: record.raw,
+        clean: record.clean,
+      }),
+    });
+    if (!res.ok) {
+      $("jobLine").textContent = `Could not finish study pack (${res.status})`;
+      return;
+    }
+    const data = await res.json();
+    const jobId = data.jobId;
+    const merged = await mergeLectureRecord(record.lectureId, {
+      jobId,
+      stages: {
+        transcript: "done",
+        importance: "pending",
+        notes: "pending",
+        mcqs: "pending",
+        flashcards: "pending",
+        revision: "pending",
+      },
+    });
+    await chrome.storage.local.set({
+      jobState: {
+        phase: "processing",
+        lectureId: record.lectureId,
+        jobId,
+        error: null,
+        updatedAt: Date.now(),
+      },
+    });
+    paint(merged);
+    startPolling(jobId, record.lectureId);
+  } catch (err) {
+    $("jobLine").textContent = err?.message || "Could not finish study pack";
+  } finally {
+    resumeInFlight = false;
+  }
+}
+
 function startPolling(jobId, lectureId) {
   stopPolling();
   const tick = async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/status/${encodeURIComponent(jobId)}`);
+      if (res.status === 404) {
+        stopPolling();
+        const rec = await loadLectureTranscript(lectureId);
+        if (hasTranscript(rec) && !packReady(rec)) {
+          await resumeStudyPack(rec);
+        } else {
+          $("jobLine").textContent = "Job lost after API restart. Click Finish study pack.";
+        }
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
-      const merged = await mergeLectureRecord(lectureId, {
+      const live = applyStatus(current, data, jobId);
+      live.lectureId = lectureId;
+      paint(live);
+      mergeLectureRecord(lectureId, {
         jobId,
-        title: current?.title,
+        title: live.title,
         raw: data.raw,
         clean: data.clean,
         importance: data.importance,
@@ -205,8 +314,7 @@ function startPolling(jobId, lectureId) {
         revision: data.revision,
         stages: data.stages,
         error: data.error,
-      });
-      paint(merged);
+      }).catch(() => {});
       if (data.status === "done" || data.status === "error") stopPolling();
     } catch {
       /* keep polling */
@@ -229,11 +337,20 @@ async function loadCurrent() {
   const lectureId = currentLectureId || jobState?.lectureId;
   let record = lectureId ? await loadLectureTranscript(lectureId) : null;
   if (!record && lectureId) record = { lectureId, title: lectureId, stages: jobState?.stages };
+  if (current?.lectureId === lectureId) {
+    record = applyStatus(record, current, current.jobId);
+  }
   if (record) paint(record);
   const rows = await listLectureTranscripts();
   renderHistory(rows);
-  if (jobState?.jobId && lectureId && !packReady(record || {})) {
+  if (packReady(record || {})) return;
+  if (resumeInFlight || pollTimer) return;
+  if (jobState?.jobId && lectureId) {
     startPolling(jobState.jobId, lectureId);
+    return;
+  }
+  if (hasTranscript(record) && !packReady(record)) {
+    await resumeStudyPack(record);
   }
 }
 
@@ -265,6 +382,11 @@ $("viewRaw").addEventListener("click", () => {
   renderTranscript(current, $("search").value.trim());
 });
 $("generatePack").addEventListener("click", () => {
+  if (pollTimer || resumeInFlight) return;
+  if (hasTranscript(current) && !packReady(current)) {
+    resumeStudyPack(current);
+    return;
+  }
   chrome.runtime.sendMessage({ type: "START_GENERATE" }, (res) => {
     void chrome.runtime.lastError;
     if (res?.ok === false) {
@@ -297,11 +419,22 @@ $("cardFlip").addEventListener("click", () => {
   renderCard(current);
 });
 $("dlPdf").addEventListener("click", () => {
-  const text = current?.revision || "";
+  const raw = (current?.revision || current?.notes || "").trim();
+  if (!raw) {
+    $("jobLine").textContent = "Revision is not ready yet.";
+    return;
+  }
   const JsPDF = window.jspdf?.jsPDF;
-  if (!JsPDF) return;
+  if (!JsPDF) {
+    $("jobLine").textContent = "PDF library failed to load.";
+    return;
+  }
   const doc = new JsPDF({ unit: "pt", format: "letter" });
-  const lines = doc.splitTextToSize(text.replace(/[#*_]/g, ""), 500);
+  const safe = raw
+    .replace(/[#*_`]/g, "")
+    .replace(/[^\t\n\r\x20-\x7E]/g, " ")
+    .replace(/[ \t]+\n/g, "\n");
+  const lines = doc.splitTextToSize(safe, 500);
   doc.setFont("times", "normal");
   doc.setFontSize(11);
   let y = 48;
@@ -310,7 +443,11 @@ $("dlPdf").addEventListener("click", () => {
       doc.addPage();
       y = 48;
     }
-    doc.text(line, 48, y);
+    try {
+      doc.text(String(line || " "), 48, y);
+    } catch {
+      /* skip a line that the built-in font cannot draw */
+    }
     y += 14;
   });
   doc.save(`${(current?.lectureId || "revision").slice(0, 40)}.pdf`);
