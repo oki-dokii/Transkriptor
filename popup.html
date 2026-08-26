@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Transcripts for CodeTantra Lectures</title>
+    <style>
+      html,
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        min-width: 360px;
+        min-height: 420px;
+      }
+      body {
+        padding: 12px;
+        box-sizing: border-box;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      .url {
+        word-break: break-all;
+        font-size: 12px;
+      }
+      button:disabled {
+        opacity: 0.6;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 8px 0;
+      }
+      [hidden],
+      .row[hidden] {
+        display: none !important;
+      }
+      #transcript {
+        white-space: pre-wrap;
+        font-size: 12px;
+        line-height: 1.4;
+        height: 240px;
+        overflow: auto;
+        border: 1px solid #ccc;
+        padding: 8px;
+        background: #fafafa;
+      }
+      .toggle[aria-pressed="true"] {
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Transcripts for CodeTantra Lectures</h1>
+    <p id="status">No lecture detected yet.</p>
+    <p><strong>Webcam</strong></p>
+    <p id="webcamUrl" class="url">—</p>
+    <p><strong>Deskshare</strong></p>
+    <p id="deskshareUrl" class="url">—</p>
+    <p id="jobStatus"></p>
+    <div class="row">
+      <button id="generate" type="button" disabled>Generate Transcript</button>
+      <button id="openPanel" type="button">Open side panel</button>
+    </div>
+    <div class="row" id="viewToggle" hidden>
+      <button id="viewRaw" class="toggle" type="button" aria-pressed="false">Raw</button>
+      <button id="viewClean" class="toggle" type="button" aria-pressed="true">Clean</button>
+    </div>
+    <pre id="transcript">No transcript yet. Click Generate Transcript.</pre>
+    <div class="row" id="actions" hidden>
+      <button id="copy" type="button">Copy to Clipboard</button>
+      <button id="dlTxt" type="button">Download .txt</button>
+      <button id="dlMd" type="button">Download .md</button>
+      <button id="dlSrt" type="button">Download .srt</button>
+    </div>
+    <script src="config.js"></script>
+    <script src="idb.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

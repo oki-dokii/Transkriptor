@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Study pack</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="mast">
+      <p class="kicker">CodeTantra</p>
+      <h1 id="lectureTitle">Study pack</h1>
+      <p id="jobLine" class="job-line">Waiting for a lecture…</p>
+      <button type="button" id="generatePack">Generate study pack</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="transcript" aria-selected="true">Transcript</button>
+      <button type="button" role="tab" data-tab="notes">Notes</button>
+      <button type="button" role="tab" data-tab="mcqs">MCQs</button>
+      <button type="button" role="tab" data-tab="flashcards">Flashcards</button>
+      <button type="button" role="tab" data-tab="revision">Revision</button>
+    </nav>
+
+    <section id="panel-transcript" class="panel" data-panel="transcript">
+      <div class="toolbar">
+        <div class="seg">
+          <button type="button" id="viewClean" class="on">Clean</button>
+          <button type="button" id="viewRaw">Raw</button>
+        </div>
+        <input id="search" type="search" placeholder="Search transcript…" />
+      </div>
+      <div class="toolbar">
+        <button type="button" id="copy">Copy</button>
+        <button type="button" id="dlTxt">.txt</button>
+        <button type="button" id="dlMd">.md</button>
+        <button type="button" id="dlSrt">.srt</button>
+      </div>
+      <pre id="transcriptBody" class="scroll paper">No transcript yet.</pre>
+    </section>
+
+    <section id="panel-notes" class="panel" data-panel="notes" hidden>
+      <p id="notesStatus" class="hint"></p>
+      <article id="notesBody" class="scroll prose"></article>
+    </section>
+
+    <section id="panel-mcqs" class="panel" data-panel="mcqs" hidden>
+      <p id="mcqScore" class="hint"></p>
+      <div id="mcqBody" class="scroll"></div>
+    </section>
+
+    <section id="panel-flashcards" class="panel" data-panel="flashcards" hidden>
+      <p id="cardMeta" class="hint"></p>
+      <div id="cardStage"></div>
+      <div class="toolbar">
+        <button type="button" id="cardPrev">Previous</button>
+        <button type="button" id="cardFlip">Flip</button>
+        <button type="button" id="cardNext">Next</button>
+      </div>
+    </section>
+
+    <section id="panel-revision" class="panel" data-panel="revision" hidden>
+      <div class="toolbar">
+        <button type="button" id="dlPdf">Download PDF</button>
+      </div>
+      <article id="revisionBody" class="scroll prose"></article>
+    </section>
+
+    <footer class="history">
+      <h2>Previous lectures</h2>
+      <ul id="lectureList"></ul>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="idb.js"></script>
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/jspdf.umd.min.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
