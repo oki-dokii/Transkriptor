@@ -5,12 +5,12 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from format_transcript import segments_to_srt
-from pipeline import run_job
+from pipeline import load_jobs, persist_job, run_job, run_study_from_transcript
 
 load_dotenv()
 
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 UPLOAD_ROOT = ROOT / "uploads"
 UPLOAD_ROOT.mkdir(exist_ok=True)
 
-jobs: dict[str, dict] = {}
+jobs: dict[str, dict] = load_jobs()
 
 app = FastAPI(title="Lecture transcripts")
 app.add_middleware(
@@ -75,6 +75,47 @@ async def upload(
         "kind": kind,
     }
     background_tasks.add_task(run_job, job_id, str(dest), jobs)
+    persist_job(job_id, jobs)
+    return {"jobId": job_id}
+
+
+@app.post("/from-transcript")
+async def from_transcript(background_tasks: BackgroundTasks, body: dict = Body(...)):
+    lecture_id = str(body.get("lectureId") or "lecture")
+    segments = body.get("segments") or (body.get("raw") or {}).get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise HTTPException(status_code=400, detail="segments required")
+    clean = body.get("clean") or {}
+    clean_md = clean.get("markdown") or body.get("cleanMarkdown") or ""
+    raw = body.get("raw") if isinstance(body.get("raw"), dict) else None
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "status": "processing",
+        "transcript": segments,
+        "raw": raw,
+        "clean": clean if clean else None,
+        "cleanError": None,
+        "importance": None,
+        "importanceError": None,
+        "notes": None,
+        "mcqs": None,
+        "flashcards": None,
+        "revision": None,
+        "studyPackError": None,
+        "stages": {
+            "transcript": "done",
+            "importance": "pending",
+            "notes": "pending",
+            "mcqs": "pending",
+            "flashcards": "pending",
+            "revision": "pending",
+        },
+        "error": None,
+        "lectureId": lecture_id,
+        "kind": "transcript",
+    }
+    persist_job(job_id, jobs)
+    background_tasks.add_task(run_study_from_transcript, job_id, segments, clean_md, jobs)
     return {"jobId": job_id}
 
 

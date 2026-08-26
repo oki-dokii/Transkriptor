@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import uuid
@@ -16,6 +17,7 @@ from importance import score_transcript
 from study_pack import generate_study_pack
 
 AUDIO_BITRATE = "16k"
+JOBS_DIR = Path(__file__).resolve().parent / "jobs"
 
 _model: WhisperModel | None = None
 
@@ -122,6 +124,29 @@ def transcribe_webm(webm_path: str | Path, work_dir: str | Path | None = None) -
         raise PipelineError(f"faster-whisper transcription failed: {exc}") from exc
 
 
+def persist_job(job_id: str, jobs: dict) -> None:
+    try:
+        JOBS_DIR.mkdir(exist_ok=True)
+        (JOBS_DIR / f"{job_id}.json").write_text(
+            json.dumps(jobs[job_id], default=str),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def load_jobs() -> dict:
+    out: dict = {}
+    if not JOBS_DIR.exists():
+        return out
+    for path in JOBS_DIR.glob("*.json"):
+        try:
+            out[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return out
+
+
 def _init_stages() -> dict:
     return {
         "transcript": "pending",
@@ -157,8 +182,10 @@ def run_job(job_id: str, webm_path: str, jobs: dict) -> None:
         }
         jobs[job_id]["cleanError"] = clean_error
         jobs[job_id]["stages"]["transcript"] = "done"
+        persist_job(job_id, jobs)
 
         jobs[job_id]["stages"]["importance"] = "processing"
+        persist_job(job_id, jobs)
         try:
             jobs[job_id]["importance"] = score_transcript(segments, clean_md)
             jobs[job_id]["importanceError"] = None
@@ -167,15 +194,22 @@ def run_job(job_id: str, webm_path: str, jobs: dict) -> None:
             jobs[job_id]["importance"] = []
             jobs[job_id]["importanceError"] = str(exc)
             jobs[job_id]["stages"]["importance"] = "error"
+        persist_job(job_id, jobs)
 
         def on_stage(name: str, state: str) -> None:
             jobs[job_id]["stages"][name] = state
+            persist_job(job_id, jobs)
+
+        def on_item(name: str, value) -> None:
+            jobs[job_id][name] = value
+            persist_job(job_id, jobs)
 
         pack = generate_study_pack(
             segments,
             clean_md,
             jobs[job_id]["importance"] or [],
             on_stage=on_stage,
+            on_item=on_item,
         )
         jobs[job_id]["notes"] = pack.get("notes")
         jobs[job_id]["mcqs"] = pack.get("mcqs")
@@ -183,7 +217,68 @@ def run_job(job_id: str, webm_path: str, jobs: dict) -> None:
         jobs[job_id]["revision"] = pack.get("revision")
         jobs[job_id]["studyPackError"] = pack.get("errors") or None
         jobs[job_id]["status"] = "done"
+        persist_job(job_id, jobs)
     except Exception as exc:
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(exc)
         jobs[job_id]["transcript"] = None
+        persist_job(job_id, jobs)
+
+
+def run_study_from_transcript(job_id: str, segments: list, clean_md: str, jobs: dict) -> None:
+    try:
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["error"] = None
+        jobs[job_id]["stages"] = jobs[job_id].get("stages") or _init_stages()
+        jobs[job_id]["stages"]["transcript"] = "done"
+        jobs[job_id]["transcript"] = segments
+        raw_md = (jobs[job_id].get("raw") or {}).get("markdown") or segments_to_markdown(segments)
+        jobs[job_id]["raw"] = jobs[job_id].get("raw") or {
+            "segments": segments,
+            "markdown": raw_md,
+            "text": markdown_to_text(raw_md),
+        }
+        jobs[job_id]["clean"] = jobs[job_id].get("clean") or {
+            "markdown": clean_md or raw_md,
+            "text": markdown_to_text(clean_md or raw_md),
+        }
+        persist_job(job_id, jobs)
+
+        jobs[job_id]["stages"]["importance"] = "processing"
+        persist_job(job_id, jobs)
+        try:
+            jobs[job_id]["importance"] = score_transcript(segments, clean_md or raw_md)
+            jobs[job_id]["importanceError"] = None
+            jobs[job_id]["stages"]["importance"] = "done"
+        except Exception as exc:
+            jobs[job_id]["importance"] = []
+            jobs[job_id]["importanceError"] = str(exc)
+            jobs[job_id]["stages"]["importance"] = "error"
+        persist_job(job_id, jobs)
+
+        def on_stage(name: str, state: str) -> None:
+            jobs[job_id]["stages"][name] = state
+            persist_job(job_id, jobs)
+
+        def on_item(name: str, value) -> None:
+            jobs[job_id][name] = value
+            persist_job(job_id, jobs)
+
+        pack = generate_study_pack(
+            segments,
+            clean_md or raw_md,
+            jobs[job_id]["importance"] or [],
+            on_stage=on_stage,
+            on_item=on_item,
+        )
+        jobs[job_id]["notes"] = pack.get("notes")
+        jobs[job_id]["mcqs"] = pack.get("mcqs")
+        jobs[job_id]["flashcards"] = pack.get("flashcards")
+        jobs[job_id]["revision"] = pack.get("revision")
+        jobs[job_id]["studyPackError"] = pack.get("errors") or None
+        jobs[job_id]["status"] = "done"
+        persist_job(job_id, jobs)
+    except Exception as exc:
+        jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = str(exc)
+        persist_job(job_id, jobs)

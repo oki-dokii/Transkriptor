@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 
 from format_transcript import format_clock, segments_to_blocks
-
-STUDY_MODEL = os.getenv("CLEAN_MODEL", "gpt-4o-mini")
+from llm_client import chat_complete
 
 MCQ_PER_TIER = {
     "high": (5, 8),
@@ -63,14 +61,17 @@ def build_context(clean_markdown: str, blocks: list[dict], importance: list[dict
         item = by_idx.get(block["block_index"], {})
         tier = item.get("tier") or "low"
         emoji = TIER_EMOJI.get(tier, "⚪")
-        clock = format_clock(block["start"])
         reasons = "; ".join(item.get("reasons") or [])
         parts.append(
             f"\n## {emoji} block {block['block_index']} score={item.get('score', 0)} "
             f"{_clock_link(block['start'])}\n{block['text']}\n"
             f"(reasons: {reasons})\n"
         )
-    return "".join(parts)
+    text = "".join(parts)
+    limit = 48000
+    if len(text) > limit:
+        return text[:limit] + "\n\n[truncated for model context]\n"
+    return text
 
 
 def _extract_json(raw: str):
@@ -82,24 +83,14 @@ def _extract_json(raw: str):
 
 
 def _llm(system: str, user: str, *, json_mode: bool) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
-    kwargs = {
-        "model": STUDY_MODEL,
-        "temperature": 0.2,
-        "messages": [
+    return chat_complete(
+        [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-    }
-    if json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
-    response = client.chat.completions.create(**kwargs)
-    return (response.choices[0].message.content or "").strip()
+        temperature=0.2,
+        json_mode=json_mode,
+    )
 
 
 def _llm_json(system: str, user: str, validator):
@@ -322,6 +313,7 @@ def generate_study_pack(
     clean_markdown: str,
     importance: list[dict],
     on_stage=None,
+    on_item=None,
 ) -> dict:
     blocks = segments_to_blocks(segments)
     context = build_context(clean_markdown, blocks, importance)
@@ -332,6 +324,8 @@ def generate_study_pack(
             on_stage(name, "processing")
         try:
             pack[name] = fn()
+            if on_item:
+                on_item(name, pack[name])
             if on_stage:
                 on_stage(name, "done")
         except Exception as exc:

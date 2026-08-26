@@ -151,6 +151,7 @@ async function persistJobPayload(lectureId, jobId, data) {
     title: info.title || lectureId,
     pageUrl: info.pageUrl || "",
     raw: data.raw ?? undefined,
+    transcript: data.transcript ?? undefined,
     clean: data.clean ?? undefined,
     cleanError: data.cleanError ?? undefined,
     importance: data.importance ?? undefined,
