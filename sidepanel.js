@@ -43,6 +43,29 @@ function applyStatus(record, data, jobId) {
   };
 }
 
+function typesetMath(el) {
+  if (!el || typeof renderMathInElement !== "function") return;
+  try {
+    renderMathInElement(el, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+  } catch {
+    /* KaTeX optional */
+  }
+}
+
+function setMarkdown(el, markdown) {
+  const html = decorateTiers(parseMd(markdown));
+  el.innerHTML = html && String(html).trim() ? html : String(markdown).replace(/</g, "&lt;").replace(/\n/g, "<br>");
+  typesetMath(el);
+}
+
 function decorateTiers(html) {
   return html
     .replace(/🔥/g, '<span class="badge">🔥 high</span>')
@@ -83,7 +106,14 @@ function renderTranscript(record, query) {
       .filter((line) => line.toLowerCase().includes(q))
       .join("\n") || "(no matches)";
   }
-  $("transcriptBody").textContent = text;
+  const el = $("transcriptBody");
+  if (viewMode === "raw" || query) {
+    el.className = "scroll paper";
+    el.textContent = text;
+    return;
+  }
+  el.className = "scroll prose";
+  setMarkdown(el, text);
 }
 
 function renderNotes(record) {
@@ -95,8 +125,7 @@ function renderNotes(record) {
     $("notesBody").innerHTML = "<p>Notes will appear here as soon as they are generated.</p>";
     return;
   }
-  const html = decorateTiers(parseMd(notes));
-  $("notesBody").innerHTML = html && String(html).trim() ? html : notes.replace(/</g, "&lt;").replace(/\n/g, "<br>");
+  setMarkdown($("notesBody"), notes);
 }
 
 function renderMcqs(record) {
@@ -113,12 +142,16 @@ function renderMcqs(record) {
   items.forEach((q, i) => {
     const wrap = document.createElement("article");
     wrap.className = "mcq";
-    wrap.innerHTML = `<h3>${i + 1}. ${q.question}</h3>`;
+    const title = document.createElement("h3");
+    title.textContent = `${i + 1}. ${q.question}`;
+    wrap.appendChild(title);
+    typesetMath(title);
     q.options.forEach((opt, idx) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "opt";
       btn.textContent = opt;
+      typesetMath(btn);
       if (quizState.answered[i] != null) {
         if (idx === q.correct_index) btn.classList.add("correct");
         if (idx === quizState.answered[i] && idx !== q.correct_index) btn.classList.add("wrong");
@@ -136,6 +169,7 @@ function renderMcqs(record) {
       exp.className = "explain";
       exp.textContent = q.explanation || "";
       wrap.appendChild(exp);
+      typesetMath(exp);
     }
     root.appendChild(wrap);
   });
@@ -155,9 +189,15 @@ function renderCard(record) {
   stage.innerHTML = `
     <div class="card ${cardFlipped ? "flipped" : ""}" id="flipCard">
       <div class="badge">${card.tier === "high" ? "🔥 high" : card.tier === "medium" ? "🟡 medium" : "⚪ low"}</div>
-      <div class="face">${card.front}</div>
-      <div class="back">${card.back}</div>
+      <div class="face"></div>
+      <div class="back"></div>
     </div>`;
+  const face = stage.querySelector(".face");
+  const back = stage.querySelector(".back");
+  face.textContent = card.front;
+  back.textContent = card.back;
+  typesetMath(face);
+  typesetMath(back);
   $("flipCard").addEventListener("click", () => {
     cardFlipped = !cardFlipped;
     renderCard(current);
@@ -166,9 +206,11 @@ function renderCard(record) {
 
 function renderRevision(record) {
   const revision = (record?.revision || "").trim();
-  $("revisionBody").innerHTML = revision
-    ? decorateTiers(parseMd(revision))
-    : `<p>Revision ${stageLabel(record?.stages, "revision", false)}</p>`;
+  if (!revision) {
+    $("revisionBody").innerHTML = `<p>Revision ${stageLabel(record?.stages, "revision", false)}</p>`;
+    return;
+  }
+  setMarkdown($("revisionBody"), revision);
 }
 
 function renderHistory(rows) {
