@@ -10,10 +10,18 @@ FILLER_RE = re.compile(
 )
 FALSE_START_RE = re.compile(r"\b(\w+)(?:\s+\1){1,3}\b", re.IGNORECASE)
 
-CLEAN_SYSTEM = """You clean lecture transcripts for later LLM use.
+CLEAN_SYSTEM = """You clean lecture transcripts for later study and for LLM use.
 Remove filler words (um, uh, er, ah, hmm), false starts, and obvious ASR errors.
 Do not summarize, do not add facts, and do not drop real content.
 Keep every "## HH:MM:SS" heading in the same order.
+
+When the speaker dictates mathematics, rewrite it as LaTeX — not spoken English.
+Use \\( ... \\) for inline math and \\[ ... \\] for displayed equations.
+Examples: "x squared plus 1 over n" → \\( x^{2} + 1/n \\);
+"integral from 0 to 1 of f of x dx" → \\( \\int_{0}^{1} f(x)\\,dx \\);
+"sigma from i equals 1 to n" → \\( \\sum_{i=1}^{n} \\).
+Leave ordinary English prose as English. If you are unsure of a symbol, keep the words.
+
 Return only the cleaned Markdown."""
 
 

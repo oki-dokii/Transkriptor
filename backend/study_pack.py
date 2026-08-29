@@ -23,6 +23,17 @@ MIN_FLASHCARDS = 1
 
 TIER_EMOJI = {"high": "🔥", "medium": "🟡", "low": "⚪"}
 
+MATH_STYLE = (
+    "Write mathematics as LaTeX using \\( ... \\) inline and \\[ ... \\] for display. "
+    "Never leave spoken forms like 'x squared' or 'f of x' when a formula is meant. "
+    "Do not use $...$ delimiters (Markdown will break them)."
+)
+
+TIMESTAMP_QUESTION_RE = re.compile(
+    r"(what was (discussed|said|mentioned|talked)|around\s+\d{1,2}:\d{2}|at\s+\d{1,2}:\d{2}|this timestamp)",
+    re.IGNORECASE,
+)
+
 
 def _clock_link(seconds: float) -> str:
     clock = format_clock(seconds)
@@ -106,6 +117,26 @@ def _llm_json(system: str, user: str, validator):
     raise RuntimeError(f"JSON validation failed: {last_error}")
 
 
+def is_timestamp_question(question: str) -> bool:
+    text = (question or "").strip()
+    if not text:
+        return True
+    if TIMESTAMP_QUESTION_RE.search(text):
+        return True
+    if re.search(r"\b\d{1,2}:\d{2}(:\d{2})?\b", text) and re.search(
+        r"(discussed|said|mentioned|around|timestamp)", text, re.I
+    ):
+        return True
+    return False
+
+
+def _first_sentence(text: str, limit: int = 160) -> str:
+    chunk = re.split(r"(?<=[.!?])\s+", (text or "").strip())[0].strip()
+    if len(chunk) > limit:
+        chunk = chunk[: limit - 1].rstrip() + "…"
+    return chunk or "a key idea from this lecture"
+
+
 def validate_mcqs(data) -> list[dict]:
     rows = data.get("mcqs") if isinstance(data, dict) else data
     if not isinstance(rows, list) or not rows:
@@ -124,6 +155,8 @@ def validate_mcqs(data) -> list[dict]:
         question = str(item.get("question") or "").strip()
         if not question:
             raise ValueError("question empty")
+        if is_timestamp_question(question):
+            raise ValueError("question must test a concept, not a timestamp")
         out.append(
             {
                 "question": question,
@@ -133,6 +166,8 @@ def validate_mcqs(data) -> list[dict]:
                 "source_timestamp": ts,
             }
         )
+    if not out:
+        raise ValueError("no conceptual MCQs")
     return out
 
 
@@ -146,6 +181,8 @@ def validate_flashcards(data) -> list[dict]:
         back = str(item.get("back") or "").strip()
         if not front or not back:
             raise ValueError("flashcard missing front/back")
+        if is_timestamp_question(front):
+            raise ValueError("flashcard front must be a concept, not a timestamp")
         tier = str(item.get("tier") or "medium").lower()
         if tier not in TIER_EMOJI:
             tier = "medium"
@@ -165,38 +202,49 @@ def validate_flashcards(data) -> list[dict]:
 
 def fallback_notes(blocks: list[dict], importance: list[dict]) -> str:
     by_idx = {item["block_index"]: item for item in importance}
-    lines = ["# Lecture notes\n"]
+    lines = [
+        "# Lecture notes\n",
+        "_Spoken math is shown as transcribed; regenerate with Gemini for LaTeX._\n",
+    ]
     for block in blocks:
         item = by_idx.get(block["block_index"], {})
         tier = item.get("tier") or "low"
+        if tier == "low":
+            continue
         emoji = TIER_EMOJI[tier]
-        clock = format_clock(block["start"])
-        heading = f"{emoji} " if tier == "high" else ""
-        lines.append(f"## {heading}{clock}\n")
-        lines.append(f"{_clock_link(block['start'])}\n")
+        topic = _first_sentence(block["text"], 80)
+        lines.append(f"## {emoji} {topic}\n")
         lines.append(f"{block['text']}\n")
+        lines.append(f"_Source: {_clock_link(block['start'])}_\n")
+    if len(lines) <= 2:
+        lines.append("No high- or medium-importance blocks were found.\n")
     return "\n".join(lines)
 
 
 def fallback_mcqs(blocks: list[dict], importance: list[dict]) -> list[dict]:
     by_idx = {item["block_index"]: item for item in importance}
+    distractors = [
+        "This was only classroom logistics or attendance.",
+        "The lecture stated the opposite of this claim.",
+        "This formula / definition was never introduced.",
+    ]
     out = []
     for block in blocks:
         item = by_idx.get(block["block_index"], {})
         if item.get("tier") == "low" and out:
             continue
-        snippet = block["text"][:80]
+        stem = _first_sentence(block["text"], 140)
         out.append(
             {
-                "question": f"What was discussed around {format_clock(block['start'])}?",
+                "question": (
+                    "Which statement best matches a concept taught in this lecture?"
+                ),
                 "options": [
-                    snippet or "Core concept from this block",
-                    "Attendance and classroom logistics only",
-                    "Unrelated historical anecdote",
-                    "None of the above",
+                    stem,
+                    *distractors,
                 ],
                 "correct_index": 0,
-                "explanation": "Drawn from the lecture block at this timestamp.",
+                "explanation": f"Paraphrase of the lecture idea (source {_clock_link(block['start'])}).",
                 "source_timestamp": float(block["start"]),
             }
         )
@@ -204,8 +252,13 @@ def fallback_mcqs(blocks: list[dict], importance: list[dict]) -> list[dict]:
             break
     return out or [
         {
-            "question": "What is this lecture mainly about?",
-            "options": ["The recorded topic", "Sports scores", "Weather", "None"],
+            "question": "What is this lecture mainly trying to teach?",
+            "options": [
+                "The recorded subject of the lecture",
+                "Sports scores",
+                "Weather",
+                "Unrelated trivia",
+            ],
             "correct_index": 0,
             "explanation": "Fallback question from the transcript.",
             "source_timestamp": 0.0,
@@ -221,10 +274,10 @@ def fallback_flashcards(blocks: list[dict], importance: list[dict]) -> list[dict
         tier = item.get("tier") or "low"
         if tier == "low" and cards:
             continue
-        sentence = re.split(r"(?<=[.!?])\s+", block["text"].strip())[0]
+        prompt = _first_sentence(block["text"], 100)
         cards.append(
             {
-                "front": sentence[:140] or f"Point at {format_clock(block['start'])}",
+                "front": f"Recall: {prompt}",
                 "back": block["text"][:400],
                 "tier": tier,
                 "source_timestamp": float(block["start"]),
@@ -235,23 +288,37 @@ def fallback_flashcards(blocks: list[dict], importance: list[dict]) -> list[dict
 
 def fallback_revision(blocks: list[dict], importance: list[dict]) -> str:
     by_idx = {item["block_index"]: item for item in importance}
-    lines = ["# 10-minute revision\n", "_Low-importance material omitted._\n"]
+    formulas = []
+    ideas = []
     for block in blocks:
         item = by_idx.get(block["block_index"], {})
         if item.get("tier") not in {"high", "medium"}:
             continue
-        emoji = TIER_EMOJI[item["tier"]]
-        lines.append(f"- {emoji} {_clock_link(block['start'])}: {block['text'][:280]}\n")
-    if len(lines) == 2:
-        lines.append("- No 🔥/🟡 blocks; review the notes for the main thread.\n")
+        text = block["text"]
+        lowered = text.lower()
+        entry = f"- {text[:320]}  \n  _({format_clock(block['start'])})_"
+        if any(k in lowered for k in ("formula", "equals", "integral", "derivative", "theorem")):
+            formulas.append(entry)
+        else:
+            ideas.append(entry)
+    lines = ["# 10-minute revision\n"]
+    if formulas:
+        lines.append("## Key formulas and results\n")
+        lines.extend(f"{x}\n" for x in formulas)
+    if ideas:
+        lines.append("## Definitions and ideas\n")
+        lines.extend(f"{x}\n" for x in ideas)
+    if len(lines) == 1:
+        lines.append("No high- or medium-importance blocks; skim the notes.\n")
     return "\n".join(lines)
 
 
 def generate_notes(context: str, blocks: list[dict], importance: list[dict]) -> str:
     system = (
         "You write concise lecture notes in Markdown. "
-        "Organize by the given topic blocks. Prefix 🔥 high-importance headings. "
-        "Include a timestamp link of the form [HH:MM:SS](#) for each section. "
+        "Organize by topic name, not by clock time. Prefix 🔥 on high-importance headings. "
+        "A small source timestamp like (_12:03_) may sit at the end of a section — never as the title. "
+        f"{MATH_STYLE} "
         "Do not invent content."
     )
     user = f"Write notes from this lecture context.\n\n{context}"
@@ -264,10 +331,15 @@ def generate_notes(context: str, blocks: list[dict], importance: list[dict]) -> 
 def generate_mcqs(context: str, blocks: list[dict], importance: list[dict]) -> list[dict]:
     n = _quota(importance, MCQ_PER_TIER, MAX_MCQS, MIN_MCQS)
     system = (
-        "You write multiple-choice questions. Return JSON only: "
+        "You write exam-style multiple-choice questions a student can answer from memory. "
+        "Ask about definitions, formulas, conditions, and consequences. "
+        "Never ask what was said at a timestamp or 'what was discussed around HH:MM:SS'. "
+        "source_timestamp is metadata only (seconds from start) — do not mention it in the question text. "
+        f"{MATH_STYLE} "
+        "Return JSON only: "
         '{"mcqs":[{"question":str,"options":[str,str,str,str],"correct_index":int,'
         '"explanation":str,"source_timestamp":number}]}. '
-        "correct_index is 0-3. source_timestamp is seconds from lecture start."
+        "correct_index is 0-3."
     )
     user = (
         f"Create about {n} MCQs. Allocate more to 🔥 high blocks "
@@ -276,7 +348,10 @@ def generate_mcqs(context: str, blocks: list[dict], importance: list[dict]) -> l
         f"{MCQ_PER_TIER['low'][0]}-{MCQ_PER_TIER['low'][1]} per low block.\n\n{context}"
     )
     try:
-        return _llm_json(system, user, validate_mcqs)
+        rows = _llm_json(system, user, validate_mcqs)
+        return [q for q in rows if not is_timestamp_question(q["question"])] or fallback_mcqs(
+            blocks, importance
+        )
     except Exception:
         return fallback_mcqs(blocks, importance)
 
@@ -284,7 +359,10 @@ def generate_mcqs(context: str, blocks: list[dict], importance: list[dict]) -> l
 def generate_flashcards(context: str, blocks: list[dict], importance: list[dict]) -> list[dict]:
     n = _quota(importance, FLASHCARDS_PER_TIER, MAX_FLASHCARDS, MIN_FLASHCARDS)
     system = (
-        "You write study flashcards. Return JSON only: "
+        "You write study flashcards. Front is a prompt (name of a theorem, 'State the formula for …'). "
+        "Back is the statement or derivation sketch. Never put a clock time on the front. "
+        f"{MATH_STYLE} "
+        "Return JSON only: "
         '{"flashcards":[{"front":str,"back":str,"tier":"high"|"medium"|"low",'
         '"source_timestamp":number}]}. Weight toward high-importance blocks.'
     )
@@ -297,9 +375,14 @@ def generate_flashcards(context: str, blocks: list[dict], importance: list[dict]
 
 def generate_revision(context: str, blocks: list[dict], importance: list[dict]) -> str:
     system = (
-        "You write a 10-minute revision summary in Markdown. "
-        "Cover only 🔥 high and 🟡 medium content. Explicitly skip ⚪ low material. "
-        "Use [HH:MM:SS](#) timestamp links."
+        "You write a 10-minute revision sheet in Markdown a student can scan quickly. "
+        "Required sections, in this order, omit a section if empty: "
+        "## Key formulas  ## Definitions  ## Theorems / results  ## Common mistakes. "
+        "Use bullet lists. Put each formula on its own display line. "
+        "Do not structure the sheet as a list of timestamps. "
+        "You may add (_HH:MM:SS_) at the end of a bullet as a pointer, never as the heading. "
+        "Cover only 🔥 high and 🟡 medium content. Skip ⚪ low material. "
+        f"{MATH_STYLE}"
     )
     user = f"Write the revision summary.\n\n{context}"
     try:

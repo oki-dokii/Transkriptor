@@ -141,17 +141,29 @@ input[type="search"] {
   padding: 14px 16px;
   border-radius: 8px;
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   min-height: 160px;
 }
 
-#notesBody, #revisionBody {
-  white-space: normal;
+.prose h1 { font-size: 18px; margin: 0 0 0.8em; }
+.prose h2 {
+  font-size: 15px;
+  margin: 1.2em 0 0.45em;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(42, 33, 24, 0.15);
+}
+.prose h3 { font-size: 14px; margin: 1em 0 0.35em; }
+.prose p { margin: 0.55em 0; }
+.prose ul, .prose ol { margin: 0.4em 0 0.8em; padding-left: 1.25em; }
+.prose li { margin: 0.35em 0; }
+.prose a { color: #8a5a12; }
+.prose .katex-display {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
-.prose h1, .prose h2, .prose h3 { font-size: 16px; margin: 1em 0 0.4em; }
-.prose p { margin: 0.5em 0; }
-.prose a { color: #8a5a12; }
+.mcq .katex, .card .katex { font-size: 1.05em; }
 
 .badge {
   display: inline-block;

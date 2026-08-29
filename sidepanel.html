@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Study pack</title>
     <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
   </head>
   <body>
     <header class="mast">
@@ -35,7 +36,7 @@
         <button type="button" id="dlMd">.md</button>
         <button type="button" id="dlSrt">.srt</button>
       </div>
-      <pre id="transcriptBody" class="scroll paper">No transcript yet.</pre>
+      <div id="transcriptBody" class="scroll paper">No transcript yet.</div>
     </section>
 
     <section id="panel-notes" class="panel" data-panel="notes" hidden>
@@ -73,6 +74,8 @@
     <script src="config.js"></script>
     <script src="idb.js"></script>
     <script src="vendor/marked.min.js"></script>
+    <script src="vendor/katex/katex.min.js"></script>
+    <script src="vendor/katex/auto-render.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="sidepanel.js"></script>
   </body>
