@@ -3,7 +3,8 @@ const TIMEOUT_MS = 8000;
 
 let webcamUrl = null;
 let deskshareUrl = null;
-let sent = false;
+let lastSentWebcam = null;
+let lastSentDeskshare = null;
 let generateInFlight = false;
 let jobPollTimer = null;
 
@@ -15,15 +16,24 @@ function scanVideos() {
   const videos = document.querySelectorAll("video");
   for (const video of videos) {
     const src = srcOf(video);
-    if (!src) continue;
-    if (/webcams/i.test(src)) webcamUrl = src;
-    if (/deskshare/i.test(src)) deskshareUrl = src;
+    if (src) {
+      if (/webcams/i.test(src)) webcamUrl = src;
+      if (/deskshare/i.test(src)) deskshareUrl = src;
+    }
+  }
+  const sources = document.querySelectorAll("video source, audio source");
+  for (const source of sources) {
+    const src = source.src || source.getAttribute("src") || "";
+    if (src) {
+      if (/webcams/i.test(src)) webcamUrl = src;
+      if (/deskshare/i.test(src)) deskshareUrl = src;
+    }
   }
 }
 
 function sendIfFound() {
-  if (sent) return false;
   if (!webcamUrl && !deskshareUrl) return false;
+  if (lastSentWebcam === webcamUrl && lastSentDeskshare === deskshareUrl) return false;
 
   chrome.runtime.sendMessage({
     type: "LECTURE_MEDIA_FOUND",
@@ -32,7 +42,8 @@ function sendIfFound() {
     pageUrl: location.href,
     pageTitle: document.title,
   });
-  sent = true;
+  lastSentWebcam = webcamUrl;
+  lastSentDeskshare = deskshareUrl;
   return true;
 }
 
@@ -232,53 +243,28 @@ function injectStudyButton() {
   (document.body || document.documentElement).appendChild(host);
 }
 
-  const host = document.createElement("div");
-  host.id = "ct-study-fab-host";
-  host.style.cssText = [
-    "all:initial",
-    "position:fixed",
-    "right:20px",
-    "bottom:28px",
-    "z-index:2147483647",
-    "pointer-events:auto",
-  ].join(";");
-  const shadow = host.attachShadow({ mode: "open" });
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = "🧠 Generate Study Pack";
-  btn.style.cssText = [
-    "pointer-events:auto",
-    "cursor:pointer",
-    "padding:10px 14px",
-    "border:0",
-    "border-radius:999px",
-    "background:#1c1914",
-    "color:#f3e6c8",
-    "font:600 13px/1.2 Palatino,Georgia,serif",
-    "box-shadow:0 8px 24px rgba(0,0,0,.45)",
-  ].join(";");
-  btn.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    chrome.runtime.sendMessage({ type: "OPEN_STUDY_PACK" }, (res) => {
-      void chrome.runtime.lastError;
-      if (res?.generate) chrome.runtime.sendMessage({ type: "START_GENERATE" });
-    });
-  });
-  shadow.appendChild(btn);
-  (document.body || document.documentElement).appendChild(host);
+
+function onDomChange() {
+  injectStudyButton();
+  scanVideos();
+  sendIfFound();
 }
 
 injectStudyButton();
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", injectStudyButton);
+  document.addEventListener("DOMContentLoaded", onDomChange);
 }
-setTimeout(injectStudyButton, 1500);
-setTimeout(injectStudyButton, 5000);
-new MutationObserver(() => injectStudyButton()).observe(document.documentElement, {
+setTimeout(onDomChange, 1500);
+setTimeout(onDomChange, 5000);
+
+new MutationObserver(onDomChange).observe(document.documentElement, {
   childList: true,
   subtree: true,
 });
+
+document.addEventListener("play", onDomChange, true);
+document.addEventListener("loadedmetadata", onDomChange, true);
+document.addEventListener("playing", onDomChange, true);
 
 if (!tick()) {
   const started = Date.now();
