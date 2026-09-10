@@ -250,20 +250,31 @@ function packReady(rec) {
   );
 }
 
-function paint(record) {
+function paint(record, jobState) {
   current = record;
   $("lectureTitle").textContent = record?.title || "Study pack";
   const stages = record?.stages;
-  if (record?.error) {
-    $("jobLine").textContent = record.error;
+  const error = record?.error || jobState?.error;
+  if (error) {
+    $("jobLine").textContent = error;
   } else if (packReady(record)) {
     $("jobLine").textContent = "All outputs ready";
   } else if (hasTranscript(record) && !packReady(record)) {
     $("jobLine").textContent = "Transcript ready. Building notes / MCQs / cards…";
   } else if (stages) {
     $("jobLine").textContent = `T ${stages.transcript || "…"} · N ${stages.notes || "…"} · Q ${stages.mcqs || "…"} · F ${stages.flashcards || "…"} · R ${stages.revision || "…"}`;
+  } else if (jobState?.phase === "fetching") {
+    const fetched = ((jobState.bytesFetched || 0) / (1024 * 1024)).toFixed(1);
+    const total = jobState.bytesTotal ? ` / ${(jobState.bytesTotal / (1024 * 1024)).toFixed(1)} MB` : " MB";
+    $("jobLine").textContent = `Downloading audio (${fetched}${total})…`;
+  } else if (jobState?.phase === "uploading") {
+    $("jobLine").textContent = "Uploading audio to backend…";
+  } else if (jobState?.phase === "processing") {
+    $("jobLine").textContent = "Transcribing with Whisper…";
+  } else if (jobState?.phase === "starting") {
+    $("jobLine").textContent = "Starting lecture capture…";
   } else {
-    $("jobLine").textContent = "Generating…";
+    $("jobLine").textContent = record ? "Ready to generate" : "No lecture detected";
   }
   $("generatePack").textContent =
     hasTranscript(record) && !packReady(record) ? "Finish study pack" : "Generate study pack";
@@ -382,7 +393,7 @@ async function loadCurrent() {
   if (current?.lectureId === lectureId) {
     record = applyStatus(record, current, current.jobId);
   }
-  if (record) paint(record);
+  if (record) paint(record, jobState);
   const rows = await listLectureTranscripts();
   renderHistory(rows);
   if (packReady(record || {})) return;
